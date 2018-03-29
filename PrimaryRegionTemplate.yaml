@@ -6,10 +6,6 @@ Parameters:
     Description: 'The value for the key tag that you want all volumes to have for the snapshot managment to apply.'
     Type: 'String'
     Default: 'none'
-  DRRegion:
-    Description: 'The DR region where snapshots will be copied (This should be a different region from the region you are running this CloudFormation stack in.'
-    Type: 'String'
-    Default: 'us-east-2'
   Retention:
     Description: 'The number of snapshots you want to keep per volume.'
     Type: 'String'
@@ -212,21 +208,6 @@ Resources:
       Environment:
         Variables:
           tagKey: !Ref tagKeyValue
-  CopySnapshotToDRRegion:
-    Type: 'AWS::Serverless::Function'
-    Properties:
-      Handler: CopySnapshotToDR.handler
-      Runtime: nodejs4.3
-      FunctionName: !Sub "CopySnapshotToDRRegion-${FunctionNameSuffix}"
-      CodeUri: .
-      Role: !GetAtt SnapshotManagementIAMRole.Arn
-      Description: >-
-        Copy the most recent snapshot to the DR region
-      MemorySize: 128
-      Timeout: 15
-      Environment:
-        Variables:
-          destRegion: !Ref DRRegion
   DeleteOldSnapshots:
     Type: 'AWS::Serverless::Function'
     Properties:
@@ -301,7 +282,7 @@ Resources:
                 "OutputPath": "$",
                 "ResultPath": "$.snapshotList",
                 "TimeoutSeconds": 60,
-                "Next": "ManageSnapshots",
+                "Next": "EvaluateSnapshotDeletion",
                 "Catch": [
                   {
                     "ErrorEquals": ["States.ALL"],
@@ -310,74 +291,29 @@ Resources:
                   }
                 ]
               },
-              "ManageSnapshots": {
-                "Type": "Parallel",
-                "Branches": [
+              "EvaluateSnapshotDeletion": {
+                "Type": "Choice",
+                "Choices": [
                   {
-                    "StartAt": "CopyToDRRegion",
-                    "States": {
-                      "CopyToDRRegion": {
-                        "Type": "Task",
-                        "Resource":"${CopySnapshotToDRRegion.Arn}",
-                        "TimeoutSeconds": 10,
-                        "Catch": [
-                          {
-                            "ErrorEquals": ["States.ALL"],
-                            "ResultPath": "$.errorMsg",
-                            "Next": "NotifyUserInParallelBranch1"
-                          }
-                        ],
-                        "End": true
-                      },
-                      "NotifyUserInParallelBranch1": {
-                        "Type": "Task",
-                        "Resource": "${NotifyUser.Arn}",
-                        "TimeoutSeconds": 60,
-                        "End": true
-                      }
-                    }
-                  },
-                  {
-                    "StartAt": "EvaluateSnapshotDeletion",
-                    "States": {
-                      "EvaluateSnapshotDeletion": {
-                        "Type": "Choice",
-                        "Choices": [
-                          {
-                            "NumericGreaterThan": ${Retention},
-                            "Variable": "$.snapshotList.numSnapshots",
-                            "Next": "CleanupSnapshotsPastRetention"
-                          }
-                        ],
-                        "Default": "SuccessStateInParallel"
-                      },
-                      "CleanupSnapshotsPastRetention": {
-                        "Type": "Task",
-                        "Resource": "${DeleteOldSnapshots.Arn}",
-                        "TimeoutSeconds": 60,
-                        "Catch": [
-                          {
-                            "ErrorEquals": ["States.ALL"],
-                            "ResultPath": "$.errorMsg",
-                            "Next": "NotifyUserInParallelBranch2"
-                          }
-                        ],
-                        "End": true
-                      },
-                      "NotifyUserInParallelBranch2": {
-                        "Type": "Task",
-                        "Resource": "${NotifyUser.Arn}",
-                        "TimeoutSeconds": 60,
-                        "End": true
-                      },
-                      "SuccessStateInParallel" : {
-                        "Type" : "Succeed",
-                        "OutputPath": "$"
-                      }
-                    }
+                    "NumericGreaterThan": ${Retention},
+                    "Variable": "$.snapshotList.numSnapshots",
+                    "Next": "CleanupSnapshotsPastRetention"
                   }
                 ],
-                "Next": "SuccessState"
+                "Default": "SuccessState"
+              },
+              "CleanupSnapshotsPastRetention": {
+                "Type": "Task",
+                "Resource": "${DeleteOldSnapshots.Arn}",
+                "TimeoutSeconds": 60,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.errorMsg",
+                    "Next": "NotifyUser"
+                  }
+                ],
+                "End": true
               },
               "NotifyUser": {
                 "Type": "Task",
