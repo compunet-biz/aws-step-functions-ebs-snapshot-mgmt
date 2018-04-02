@@ -1,3 +1,80 @@
+This automation will cleanup EBS snapshots older than X days.  It uses a combination of AWS technologies and is originally based off their [reference architecture](https://github.com/aws-samples/aws-step-functions-ebs-snapshot-mgmt).
+
+**NOTE:** Only snapshots created after this automation is setup contribute to the retention count.
+
+On snapshot creation, a CloudWatch event is triggered that tags the snapshot, then deletes (tagged) snapshots older than X days (where X is provided as a CloudFormation parameter during setup).
+
+A Step Functions state machine is used to drive the behavior of the lambda functions (node.js) that accomplish most of the work.
+
+See the [original README](#aws-step-functions-ebs-snapshot-mgmt) below for the original description, etc.
+
+# Setup
+## aws cli
+https://docs.aws.amazon.com/cli/latest/userguide/installing.html
+
+Mac users can use [Homebrew](https://brew.sh/):  https://github.com/aws/aws-cli/issues/727
+
+### MFA
+You should be using MFA, which means you need to get temporary API credentials like this:  https://aws.amazon.com/premiumsupport/knowledge-center/authenticate-mfa-cli/
+
+## profile for customer
+https://docs.aws.amazon.com/cli/latest/userguide/cli-multiple-profiles.html
+
+*aws configure --profile <CUSTOMER>*
+
+e.g.
+```
+aws configure --profile chelan
+```
+
+You can either then append `--profile <CUSTOMER>` to each aws cli invocation or (recommend) export `AWS_PROFILE` to set the profile for the session.
+
+e.g.
+```
+export AWS_PROFILE=chelan
+```
+
+## s3 bucket
+This only needs to be done once.
+
+*aws s3api create-bucket --bucket <PRIMARY_UNIQUE_BUCKET_NAME> --region <PRIMARY_REGION> --create-bucket-configuration LocationConstraint=<PRIMARY_REGION>*
+
+e.g
+```
+aws s3api create-bucket --bucket chelan-ebs-snapshot-cleanup --region us-west-2 --create-bucket-configuration LocationConstraint=us-west-2
+```
+
+## cloud formation
+
+### package artifacts
+
+aws cloudformation package --template-file PrimaryRegionTemplate.yaml --s3-bucket <PRIMARY_UNIQUE_BUCKET_NAME> --output-template-file tempPrimary.yaml --region <PRIMARY_REGION>
+
+e.g.
+```
+aws cloudformation package --template-file PrimaryRegionTemplate.yaml --s3-bucket chelan-ebs-snapshot-cleanup --output-template-file tempPrimary.yaml --region us-west-2
+```
+
+### deploy
+aws cloudformation deploy --template-file tempPrimary.yaml --stack-name PrimaryRegionSnapshotManagement --capabilities CAPABILITY_IAM
+
+e.g.
+```
+aws cloudformation deploy --template-file /Users/jguice/Development/aws-step-functions-ebs-snapshot-mgmt/tempPrimary.yaml --stack-name PrimaryRegionSnapshotManagement --capabilities CAPABILITY_IAM
+```
+
+# Testing
+At this point you should inspect and verify the following:
+- CloudFormation Template Parameters (change these via the console if needed, e.g. retention days)
+- State Machine
+- CloudWatch Event trigger on EBS snapshot creation
+
+Now you can trigger a snapshot and watch the magic.
+
+### Original README follows
+
+---
+
 # aws-step-functions-ebs-snapshot-mgmt
 
 Example architecture for integrating AWS Step Functions and Amazon CloudWatch Events.
